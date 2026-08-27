@@ -35,6 +35,82 @@
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
+// --- Web Audio Synthesizer (สร้างเสียงเอฟเฟกต์ตื่นเต้น) ---
+const AudioCtx = window.AudioContext || window.webkitAudioContext;
+let audioCtx = null;
+
+function initAudio() {
+    if (!audioCtx) {
+        audioCtx = new AudioCtx();
+    }
+    if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+    }
+}
+
+function playSound(type) {
+    if (!audioCtx) return;
+    const now = audioCtx.currentTime;
+
+    if (type === 'correct') {
+        // เสียงตอบถูก Synth High Beep
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(523.25, now); // C5
+        osc.frequency.exponentialRampToValueAtTime(1046.50, now + 0.15); // C6
+        gain.gain.setValueAtTime(0.3, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start(now);
+        osc.stop(now + 0.2);
+
+    } else if (type === 'wrong') {
+        // เสียงตอบผิด Alarm Bass Buzz
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(180, now);
+        osc.frequency.linearRampToValueAtTime(80, now + 0.25);
+        gain.gain.setValueAtTime(0.4, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start(now);
+        osc.stop(now + 0.3);
+
+    } else if (type === 'tick') {
+        // เสียงนับถอยหลัง เตือนเวลา
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(800, now);
+        gain.gain.setValueAtTime(0.1, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.05);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start(now);
+        osc.stop(now + 0.05);
+
+    } else if (type === 'gameover') {
+        // เสียงจบเกม Mission Complete Fanfare
+        [440, 554.37, 659.25, 880].forEach((freq, idx) => {
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(freq, now + idx * 0.1);
+            gain.gain.setValueAtTime(0.25, now + idx * 0.1);
+            gain.gain.exponentialRampToValueAtTime(0.01, now + idx * 0.1 + 0.3);
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.start(now + idx * 0.1);
+            osc.stop(now + idx * 0.1 + 0.3);
+        });
+    }
+}
+
+// State & Data
 let score = 0;
 let timeLeft = 60;
 let timerInterval = null;
@@ -45,11 +121,9 @@ let masterItems = [];
 let activeItems = [];
 let selectedItem = null;
 let offsetX = 0, offsetY = 0;
-
-// อาร์เรย์สำหรับเก็บเอฟเฟกต์ข้อความลอย (Effects)
 let floatingTexts = [];
 
-// Idle Timer (Auto-Reset)
+// Idle Timer
 const IDLE_LIMIT = 120;
 let idleTime = 0;
 let idleInterval = null;
@@ -70,7 +144,6 @@ window.addEventListener('touchmove', resetIdleTimer, { passive: true });
 window.addEventListener('mousedown', resetIdleTimer);
 window.addEventListener('mousemove', resetIdleTimer);
 
-// --- 1. โหลดข้อมูลคำถามจาก JSON ---
 async function loadQuestionsFromJSON() {
     try {
         const response = await fetch('questions.json?v=' + new Date().getTime());
@@ -101,7 +174,6 @@ async function loadQuestionsFromJSON() {
     }
 }
 
-// --- 2. เริ่มต้นเกม ---
 function initGame() {
     score = 0;
     timeLeft = 60;
@@ -110,10 +182,11 @@ function initGame() {
     resetIdleTimer();
     
     const startPositions = [
-        { x: 70, y: 120 },  { x: 350, y: 120 }, { x: 630, y: 120 },
-        { x: 70, y: 230 },  { x: 350, y: 230 }, { x: 630, y: 230 }
+        { x: 70, y: 110 },  { x: 350, y: 110 }, { x: 630, y: 110 },
+        { x: 70, y: 220 },  { x: 350, y: 220 }, { x: 630, y: 220 }
     ];
 
+    // สุ่มเลือก 6 ข้อจากคลัง 40 ข้อ
     const shuffled = [...masterItems].sort(() => 0.5 - Math.random()).slice(0, 6);
     
     activeItems = shuffled.map((item, index) => ({
@@ -123,14 +196,15 @@ function initGame() {
         originX: startPositions[index].x,
         originY: startPositions[index].y,
         w: 200,
-        h: 70,
-        shakeTime: 0 // แอนิเมชันสั่นเมื่อตอบผิด
+        h: 75,
+        shakeTime: 0
     }));
 
     if (timerInterval) clearInterval(timerInterval);
     timerInterval = setInterval(() => {
         if (gameState === 'PLAYING') {
             timeLeft--;
+            if (timeLeft <= 10 && timeLeft > 0) playSound('tick');
             if (timeLeft <= 0) {
                 timeLeft = 0;
                 endGame();
@@ -138,16 +212,15 @@ function initGame() {
         }
     }, 1000);
 
-    // รันการวาดหน้าจอต่อเนื่องแบบ Smooth 60FPS
     requestAnimationFrame(renderLoop);
 }
 
 function endGame() {
     gameState = 'GAMEOVER';
     clearInterval(timerInterval);
+    playSound('gameover');
 }
 
-// --- 3. เพิ่มเอฟเฟกต์ข้อความลอย (+10 / -5 / ACCESS GRANTED) ---
 function addFloatingText(text, x, y, color) {
     floatingTexts.push({
         text: text,
@@ -159,7 +232,6 @@ function addFloatingText(text, x, y, color) {
     });
 }
 
-// Loop หลักในการเรนเดอร์กราฟิก
 function renderLoop() {
     draw();
     if (gameState === 'PLAYING' || floatingTexts.length > 0) {
@@ -167,11 +239,9 @@ function renderLoop() {
     }
 }
 
-// --- 4. วาดกราฟิกทั้งหมดบน Canvas ---
 function draw() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // วาดพื้นหลัง Grid สไตล์ Cyber
     ctx.strokeStyle = 'rgba(0, 255, 204, 0.05)';
     ctx.lineWidth = 1;
     for(let i = 0; i < canvas.width; i += 40) {
@@ -190,7 +260,6 @@ function draw() {
     }
 
     if (gameState === 'PLAYING' || gameState === 'GAMEOVER') {
-        // --- Header Bar ---
         ctx.fillStyle = 'rgba(2, 20, 46, 0.8)';
         ctx.fillRect(0, 0, canvas.width, 70);
         ctx.strokeStyle = '#00ffcc';
@@ -205,7 +274,6 @@ function draw() {
         ctx.fillStyle = timeLeft <= 10 ? '#ff3366' : '#00ffcc';
         ctx.fillText(`TIME: ${timeLeft}s`, canvas.width - 30, 43);
 
-        // --- วาดถังขยะ Cyber Bins ---
         bins.forEach(bin => {
             ctx.shadowColor = bin.color || '#00ffcc';
             ctx.shadowBlur = 15;
@@ -218,20 +286,17 @@ function draw() {
             ctx.fill();
             ctx.stroke();
 
-            // ปิด Shadow ชั่วคราวไม่ให้ทับ Text
             ctx.shadowBlur = 0;
 
             ctx.fillStyle = bin.color || '#00ffcc';
-            ctx.font = 'bold 18px Kanit';
+            ctx.font = 'bold 17px Kanit';
             ctx.textAlign = 'center';
             ctx.fillText(bin.label, bin.x + bin.w / 2, bin.y + bin.h / 2 + 6);
         });
 
-        // --- วาดกล่องข้อความคำตอบ ---
         activeItems.forEach(item => {
             let renderX = item.x;
             
-            // เอฟเฟกต์การสั่น (Shake) เวลาตอบผิด
             if (item.shakeTime > 0) {
                 renderX += Math.sin(item.shakeTime * 0.8) * 8;
                 item.shakeTime--;
@@ -252,26 +317,33 @@ function draw() {
             ctx.shadowBlur = 0;
 
             ctx.fillStyle = '#ffffff';
-            ctx.font = 'bold 15px Kanit';
+            ctx.font = 'bold 14px Kanit';
             ctx.textAlign = 'center';
-            
-            // ตัดคำให้อยู่ในกล่องอย่างสวยงาม
-            ctx.fillText(item.text, renderX + item.w / 2, item.y + item.h / 2 + 5);
+
+            // ตัดคำ 2 บรรทัดกรณีข้อความยาว
+            const words = item.text.split(' ');
+            if (item.text.length > 18) {
+                const mid = Math.floor(item.text.length / 2);
+                const line1 = item.text.substring(0, mid);
+                const line2 = item.text.substring(mid);
+                ctx.fillText(line1, renderX + item.w / 2, item.y + item.h / 2 - 4);
+                ctx.fillText(line2, renderX + item.w / 2, item.y + item.h / 2 + 16);
+            } else {
+                ctx.fillText(item.text, renderX + item.w / 2, item.y + item.h / 2 + 5);
+            }
         });
 
-        // --- วาดเอฟเฟกต์ข้อความลอย (Floating FX) ---
         floatingTexts.forEach((fx, index) => {
             ctx.save();
             ctx.globalAlpha = fx.alpha;
             ctx.shadowColor = fx.color;
             ctx.shadowBlur = 12;
             ctx.fillStyle = fx.color;
-            ctx.font = `bold ${Math.floor(24 * fx.scale)}px "Share Tech Mono", Kanit`;
+            ctx.font = `bold ${Math.floor(22 * fx.scale)}px "Share Tech Mono", Kanit`;
             ctx.textAlign = 'center';
             ctx.fillText(fx.text, fx.x, fx.y);
             ctx.restore();
 
-            // อัปเดตตำแหน่งและการเลือนหาย
             fx.y -= 2;
             fx.alpha -= 0.025;
             fx.scale = Math.max(1.0, fx.scale - 0.01);
@@ -281,7 +353,6 @@ function draw() {
     }
 
     if (gameState === 'GAMEOVER') {
-        // --- หน้าสรุปผลเมื่อจบเกม ---
         ctx.fillStyle = 'rgba(3, 10, 22, 0.92)';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -297,7 +368,6 @@ function draw() {
         ctx.font = 'bold 30px Kanit';
         ctx.fillText(`TOTAL SCORE: ${score}`, canvas.width / 2, 270);
 
-        // ปุ่มเล่นใหม่ Cyber Style
         ctx.shadowColor = '#00ffcc';
         ctx.shadowBlur = 15;
         ctx.fillStyle = '#00ffcc';
@@ -322,6 +392,7 @@ function getPos(e) {
 }
 
 function onStart(e) {
+    initAudio(); // กระตุ้น Web Audio API เมื่อสัมผัสครั้งแรก
     const pos = getPos(e);
 
     if (gameState === 'GAMEOVER') {
@@ -360,8 +431,8 @@ function onEnd() {
             selectedItem.y + selectedItem.h / 2 <= bin.y + bin.h) {
 
             if (selectedItem.category === bin.id) {
-                // --- ตอบถูกต้อง ---
                 score += 10;
+                playSound('correct');
                 addFloatingText('+10 ACCESS GRANTED!', selectedItem.x + selectedItem.w / 2, selectedItem.y, '#00ffcc');
                 activeItems = activeItems.filter(i => i !== selectedItem);
                 matched = true;
@@ -370,10 +441,10 @@ function onEnd() {
                     endGame();
                 }
             } else {
-                // --- ตอบผิด (หักคะแนน) ---
                 score = Math.max(0, score - 5);
+                playSound('wrong');
                 addFloatingText('-5 ACCESS DENIED!', selectedItem.x + selectedItem.w / 2, selectedItem.y, '#ff3366');
-                selectedItem.shakeTime = 15; // ให้กล่องสั่นเตือน
+                selectedItem.shakeTime = 15;
             }
         }
     });
