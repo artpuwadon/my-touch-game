@@ -2,11 +2,12 @@
 <html lang="th">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>MFA Cyber Security Sorting Game</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MFA Cyber Security Sorting Game (Large Screen Edition)</title>
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Kanit:wght@400;600&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Kanit:wght@500;700&display=swap');
 
+        * { box-sizing: border-box; }
         body { 
             margin: 0; 
             background: #030a16; 
@@ -16,35 +17,69 @@
             user-select: none;
             touch-action: none;
             overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
         }
         #gameCanvas { 
             background: #051329; 
             display: block; 
-            margin: 10px auto; 
-            border: 2px solid #00ffcc; 
-            border-radius: 12px;
-            box-shadow: 0 0 25px rgba(0, 255, 204, 0.3), inset 0 0 15px rgba(0, 255, 204, 0.1);
+            border: 3px solid #00ffcc; 
+            border-radius: 16px;
+            box-shadow: 0 0 35px rgba(0, 255, 204, 0.35), inset 0 0 20px rgba(0, 255, 204, 0.15);
         }
     </style>
 </head>
 <body>
 
-    <canvas id="gameCanvas" width="900" height="600"></canvas>
+    <!-- ขยาย Canvas เป็น 1400 x 850 เหมาะสมลงตัวกับจอ 24 นิ้ว -->
+    <canvas id="gameCanvas" width="1400" height="850"></canvas>
 
 <script>
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
-// --- Web Audio Synthesizer (สร้างเสียงเอฟเฟกต์ตื่นเต้น) ---
+// --- Web Audio Synthesizer (BGM & SFX Engine) ---
 const AudioCtx = window.AudioContext || window.webkitAudioContext;
 let audioCtx = null;
+let bgmInterval = null;
 
 function initAudio() {
-    if (!audioCtx) {
-        audioCtx = new AudioCtx();
-    }
-    if (audioCtx.state === 'suspended') {
-        audioCtx.resume();
+    if (!audioCtx) audioCtx = new AudioCtx();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    startBGM();
+}
+
+function startBGM() {
+    if (bgmInterval || !audioCtx) return;
+    const bgmNotes = [110, 110, 130.81, 110, 146.83, 110, 130.81, 123.47];
+    let noteIndex = 0;
+
+    bgmInterval = setInterval(() => {
+        if (gameState !== 'PLAYING') return;
+        const now = audioCtx.currentTime;
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(bgmNotes[noteIndex], now);
+        gain.gain.setValueAtTime(0.04, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start(now);
+        osc.stop(now + 0.23);
+
+        noteIndex = (noteIndex + 1) % bgmNotes.length;
+    }, 250);
+}
+
+function stopBGM() {
+    if (bgmInterval) {
+        clearInterval(bgmInterval);
+        bgmInterval = null;
     }
 }
 
@@ -53,12 +88,11 @@ function playSound(type) {
     const now = audioCtx.currentTime;
 
     if (type === 'correct') {
-        // เสียงตอบถูก Synth High Beep
         const osc = audioCtx.createOscillator();
         const gain = audioCtx.createGain();
         osc.type = 'sine';
-        osc.frequency.setValueAtTime(523.25, now); // C5
-        osc.frequency.exponentialRampToValueAtTime(1046.50, now + 0.15); // C6
+        osc.frequency.setValueAtTime(523.25, now);
+        osc.frequency.exponentialRampToValueAtTime(1046.50, now + 0.15);
         gain.gain.setValueAtTime(0.3, now);
         gain.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
         osc.connect(gain);
@@ -67,13 +101,12 @@ function playSound(type) {
         osc.stop(now + 0.2);
 
     } else if (type === 'wrong') {
-        // เสียงตอบผิด Alarm Bass Buzz
         const osc = audioCtx.createOscillator();
         const gain = audioCtx.createGain();
         osc.type = 'sawtooth';
         osc.frequency.setValueAtTime(180, now);
         osc.frequency.linearRampToValueAtTime(80, now + 0.25);
-        gain.gain.setValueAtTime(0.4, now);
+        gain.gain.setValueAtTime(0.3, now);
         gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
         osc.connect(gain);
         gain.connect(audioCtx.destination);
@@ -81,7 +114,6 @@ function playSound(type) {
         osc.stop(now + 0.3);
 
     } else if (type === 'tick') {
-        // เสียงนับถอยหลัง เตือนเวลา
         const osc = audioCtx.createOscillator();
         const gain = audioCtx.createGain();
         osc.type = 'triangle';
@@ -94,7 +126,7 @@ function playSound(type) {
         osc.stop(now + 0.05);
 
     } else if (type === 'gameover') {
-        // เสียงจบเกม Mission Complete Fanfare
+        stopBGM();
         [440, 554.37, 659.25, 880].forEach((freq, idx) => {
             const osc = audioCtx.createOscillator();
             const gain = audioCtx.createGain();
@@ -151,10 +183,11 @@ async function loadQuestionsFromJSON() {
         
         const data = await response.json();
         
+        // จัดตำแหน่งถังขยะใหม่ให้ใหญ่ขึ้น (ขนาด 380x160px)
         const binPositions = [
-            { x: 45,  y: 440, w: 240, h: 120 },
-            { x: 330, y: 440, w: 240, h: 120 },
-            { x: 615, y: 440, w: 240, h: 120 }
+            { x: 60,  y: 630, w: 380, h: 160 },
+            { x: 510, y: 630, w: 380, h: 160 },
+            { x: 960, y: 630, w: 380, h: 160 }
         ];
 
         bins = data.bins.map((bin, index) => ({
@@ -168,7 +201,7 @@ async function loadQuestionsFromJSON() {
     } catch (error) {
         console.error(error);
         ctx.fillStyle = '#ff3366';
-        ctx.font = 'bold 24px Kanit';
+        ctx.font = 'bold 32px Kanit';
         ctx.textAlign = 'center';
         ctx.fillText('CRITICAL ERROR: Failed to load questions.json', canvas.width / 2, canvas.height / 2);
     }
@@ -180,13 +213,14 @@ function initGame() {
     gameState = 'PLAYING';
     floatingTexts = [];
     resetIdleTimer();
+    startBGM();
     
+    // พิกัดเริ่มต้นกล่องคำตอบ 6 กล่อง (ขนาดกล่อง 380x100px ใหญ่ชัดเจน)
     const startPositions = [
-        { x: 70, y: 110 },  { x: 350, y: 110 }, { x: 630, y: 110 },
-        { x: 70, y: 220 },  { x: 350, y: 220 }, { x: 630, y: 220 }
+        { x: 60,  y: 150 }, { x: 510, y: 150 }, { x: 960, y: 150 },
+        { x: 60,  y: 320 }, { x: 510, y: 320 }, { x: 960, y: 320 }
     ];
 
-    // สุ่มเลือก 6 ข้อจากคลัง 40 ข้อ
     const shuffled = [...masterItems].sort(() => 0.5 - Math.random()).slice(0, 6);
     
     activeItems = shuffled.map((item, index) => ({
@@ -195,8 +229,8 @@ function initGame() {
         y: startPositions[index].y,
         originX: startPositions[index].x,
         originY: startPositions[index].y,
-        w: 200,
-        h: 75,
+        w: 380,
+        h: 100,
         shakeTime: 0
     }));
 
@@ -228,7 +262,7 @@ function addFloatingText(text, x, y, color) {
         y: y,
         color: color,
         alpha: 1.0,
-        scale: 1.2
+        scale: 1.3
     });
 }
 
@@ -242,110 +276,119 @@ function renderLoop() {
 function draw() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+    // Background Cyber Grid
     ctx.strokeStyle = 'rgba(0, 255, 204, 0.05)';
     ctx.lineWidth = 1;
-    for(let i = 0; i < canvas.width; i += 40) {
+    for(let i = 0; i < canvas.width; i += 50) {
         ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, canvas.height); ctx.stroke();
     }
-    for(let j = 0; j < canvas.height; j += 40) {
+    for(let j = 0; j < canvas.height; j += 50) {
         ctx.beginPath(); ctx.moveTo(0, j); ctx.lineTo(canvas.width, j); ctx.stroke();
     }
 
     if (gameState === 'LOADING') {
         ctx.fillStyle = '#00ffcc';
-        ctx.font = 'bold 28px "Share Tech Mono", Kanit';
+        ctx.font = 'bold 36px "Share Tech Mono", Kanit';
         ctx.textAlign = 'center';
         ctx.fillText('INITIALIZING SYSTEM...', canvas.width / 2, canvas.height / 2);
         return;
     }
 
     if (gameState === 'PLAYING' || gameState === 'GAMEOVER') {
-        ctx.fillStyle = 'rgba(2, 20, 46, 0.8)';
-        ctx.fillRect(0, 0, canvas.width, 70);
+        // --- Header Bar ---
+        ctx.fillStyle = 'rgba(2, 20, 46, 0.85)';
+        ctx.fillRect(0, 0, canvas.width, 90);
         ctx.strokeStyle = '#00ffcc';
-        ctx.beginPath(); ctx.moveTo(0, 70); ctx.lineTo(canvas.width, 70); ctx.stroke();
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(0, 90); ctx.lineTo(canvas.width, 90); ctx.stroke();
 
-        ctx.font = 'bold 24px "Share Tech Mono", Kanit';
+        // ฟอนต์คะแนนและเวลาขยายใหญ่ขึ้น (34px)
+        ctx.font = 'bold 34px "Share Tech Mono", Kanit';
         ctx.fillStyle = '#00ffcc';
         ctx.textAlign = 'left';
-        ctx.fillText(`SCORE: ${score}`, 30, 43);
+        ctx.fillText(`SCORE: ${score}`, 40, 56);
 
         ctx.textAlign = 'right';
         ctx.fillStyle = timeLeft <= 10 ? '#ff3366' : '#00ffcc';
-        ctx.fillText(`TIME: ${timeLeft}s`, canvas.width - 30, 43);
+        ctx.fillText(`TIME: ${timeLeft}s`, canvas.width - 40, 56);
 
+        // --- Bins (ขยายตัวอักษรเป็น 26px) ---
         bins.forEach(bin => {
             ctx.shadowColor = bin.color || '#00ffcc';
-            ctx.shadowBlur = 15;
+            ctx.shadowBlur = 20;
             
-            ctx.fillStyle = 'rgba(5, 25, 50, 0.85)';
+            ctx.fillStyle = 'rgba(5, 25, 50, 0.9)';
             ctx.strokeStyle = bin.color || '#00ffcc';
-            ctx.lineWidth = 2;
+            ctx.lineWidth = 3;
             ctx.beginPath();
-            ctx.roundRect(bin.x, bin.y, bin.w, bin.h, 10);
+            ctx.roundRect(bin.x, bin.y, bin.w, bin.h, 14);
             ctx.fill();
             ctx.stroke();
 
             ctx.shadowBlur = 0;
 
             ctx.fillStyle = bin.color || '#00ffcc';
-            ctx.font = 'bold 17px Kanit';
+            ctx.font = 'bold 26px Kanit';
             ctx.textAlign = 'center';
-            ctx.fillText(bin.label, bin.x + bin.w / 2, bin.y + bin.h / 2 + 6);
+            ctx.fillText(bin.label, bin.x + bin.w / 2, bin.y + bin.h / 2 + 8);
         });
 
+        // --- Question Items (ขยายตัวอักษรเป็น 22px หนา อ่านง่ายขึ้นมาก) ---
         activeItems.forEach(item => {
             let renderX = item.x;
             
             if (item.shakeTime > 0) {
-                renderX += Math.sin(item.shakeTime * 0.8) * 8;
+                renderX += Math.sin(item.shakeTime * 0.8) * 10;
                 item.shakeTime--;
             }
 
             ctx.shadowColor = '#00e5ff';
-            ctx.shadowBlur = selectedItem === item ? 25 : 10;
+            ctx.shadowBlur = selectedItem === item ? 30 : 12;
 
             ctx.fillStyle = 'rgba(10, 35, 70, 0.95)';
             ctx.strokeStyle = '#00e5ff';
-            ctx.lineWidth = selectedItem === item ? 3 : 1.5;
+            ctx.lineWidth = selectedItem === item ? 4 : 2;
             
             ctx.beginPath();
-            ctx.roundRect(renderX, item.y, item.w, item.h, 8);
+            ctx.roundRect(renderX, item.y, item.w, item.h, 12);
             ctx.fill();
             ctx.stroke();
 
             ctx.shadowBlur = 0;
 
             ctx.fillStyle = '#ffffff';
-            ctx.font = 'bold 14px Kanit';
+            ctx.font = '700 22px Kanit';
             ctx.textAlign = 'center';
 
-            // ตัดคำ 2 บรรทัดกรณีข้อความยาว
-            const words = item.text.split(' ');
-            if (item.text.length > 18) {
+            // ตัดคำ 2 บรรทัดหากยาวเกินไป
+            if (item.text.length > 22) {
                 const mid = Math.floor(item.text.length / 2);
-                const line1 = item.text.substring(0, mid);
-                const line2 = item.text.substring(mid);
-                ctx.fillText(line1, renderX + item.w / 2, item.y + item.h / 2 - 4);
-                ctx.fillText(line2, renderX + item.w / 2, item.y + item.h / 2 + 16);
+                let splitPos = item.text.indexOf(' ', mid);
+                if (splitPos === -1) splitPos = mid;
+
+                const line1 = item.text.substring(0, splitPos);
+                const line2 = item.text.substring(splitPos);
+                ctx.fillText(line1, renderX + item.w / 2, item.y + item.h / 2 - 10);
+                ctx.fillText(line2, renderX + item.w / 2, item.y + item.h / 2 + 22);
             } else {
-                ctx.fillText(item.text, renderX + item.w / 2, item.y + item.h / 2 + 5);
+                ctx.fillText(item.text, renderX + item.w / 2, item.y + item.h / 2 + 7);
             }
         });
 
+        // --- Floating Text (ขยายเป็น 32px) ---
         floatingTexts.forEach((fx, index) => {
             ctx.save();
             ctx.globalAlpha = fx.alpha;
             ctx.shadowColor = fx.color;
-            ctx.shadowBlur = 12;
+            ctx.shadowBlur = 15;
             ctx.fillStyle = fx.color;
-            ctx.font = `bold ${Math.floor(22 * fx.scale)}px "Share Tech Mono", Kanit`;
+            ctx.font = `bold ${Math.floor(32 * fx.scale)}px "Share Tech Mono", Kanit`;
             ctx.textAlign = 'center';
             ctx.fillText(fx.text, fx.x, fx.y);
             ctx.restore();
 
-            fx.y -= 2;
-            fx.alpha -= 0.025;
+            fx.y -= 2.5;
+            fx.alpha -= 0.02;
             fx.scale = Math.max(1.0, fx.scale - 0.01);
 
             if (fx.alpha <= 0) floatingTexts.splice(index, 1);
@@ -353,51 +396,57 @@ function draw() {
     }
 
     if (gameState === 'GAMEOVER') {
-        ctx.fillStyle = 'rgba(3, 10, 22, 0.92)';
+        ctx.fillStyle = 'rgba(3, 10, 22, 0.94)';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
 
         ctx.shadowColor = '#00ffcc';
-        ctx.shadowBlur = 20;
+        ctx.shadowBlur = 25;
         ctx.fillStyle = '#00ffcc';
-        ctx.font = 'bold 40px "Share Tech Mono", Kanit';
+        ctx.font = 'bold 55px "Share Tech Mono", Kanit';
         ctx.textAlign = 'center';
-        ctx.fillText('MISSION COMPLETE', canvas.width / 2, 190);
+        ctx.fillText('MISSION COMPLETE', canvas.width / 2, 260);
 
         ctx.shadowBlur = 0;
         ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 30px Kanit';
-        ctx.fillText(`TOTAL SCORE: ${score}`, canvas.width / 2, 270);
+        ctx.font = 'bold 40px Kanit';
+        ctx.fillText(`TOTAL SCORE: ${score}`, canvas.width / 2, 380);
 
+        // ปุ่ม Reboot ขนาดใหญ่
         ctx.shadowColor = '#00ffcc';
-        ctx.shadowBlur = 15;
+        ctx.shadowBlur = 20;
         ctx.fillStyle = '#00ffcc';
         ctx.beginPath();
-        ctx.roundRect(canvas.width / 2 - 130, 360, 260, 65, 10);
+        ctx.roundRect(canvas.width / 2 - 180, 500, 360, 85, 14);
         ctx.fill();
 
         ctx.shadowBlur = 0;
         ctx.fillStyle = '#030a16';
-        ctx.font = 'bold 22px Kanit';
-        ctx.fillText('SYSTEM REBOOT', canvas.width / 2, 401);
+        ctx.font = 'bold 30px Kanit';
+        ctx.fillText('SYSTEM REBOOT', canvas.width / 2, 553);
     }
 }
 
 function getPos(e) {
     const rect = canvas.getBoundingClientRect();
     const touch = e.touches ? e.touches[0] : e;
+    
+    // คำนวณ Scale เพื่อรองรับการย่อ/ขยายจอภาพแบบถูกต้องแม่นยำ
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+
     return {
-        x: touch.clientX - rect.left,
-        y: touch.clientY - rect.top
+        x: (touch.clientX - rect.left) * scaleX,
+        y: (touch.clientY - rect.top) * scaleY
     };
 }
 
 function onStart(e) {
-    initAudio(); // กระตุ้น Web Audio API เมื่อสัมผัสครั้งแรก
+    initAudio();
     const pos = getPos(e);
 
     if (gameState === 'GAMEOVER') {
-        if (pos.x >= canvas.width / 2 - 130 && pos.x <= canvas.width / 2 + 130 &&
-            pos.y >= 360 && pos.y <= 425) {
+        if (pos.x >= canvas.width / 2 - 180 && pos.x <= canvas.width / 2 + 180 &&
+            pos.y >= 500 && pos.y <= 585) {
             initGame();
         }
         return;
