@@ -1,0 +1,18 @@
+{
+  "bins": [
+    { "id": "recycle", "label": "ขยะรีไซเคิล", "color": "#27ae60" },
+    { "id": "organic", "label": "ขยะอินทรีย์",  "color": "#e67e22" },
+    { "id": "hazard",  "label": "ขยะอันตราย",  "color": "#e74c3c" }
+  ],
+  "items": [
+    { "text": "ขวดพลาสติก", "category": "recycle" },
+    { "text": "กระป๋องน้ำอัดลม", "category": "recycle" },
+    { "text": "กล่องกระดาษ", "category": "recycle" },
+    { "text": "เปลือกกล้วย", "category": "organic" },
+    { "text": "เศษอาหาร", "category": "organic" },
+    { "text": "ใบไม้แห้ง", "category": "organic" },
+    { "text": "ถ่านไฟฉาย", "category": "hazard" },
+    { "text": "หลอดไฟ", "category": "hazard" },
+    { "text": "กระป๋องสเปรย์", "category": "hazard" }
+  ]
+}
