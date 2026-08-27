@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Touchscreen Sorting Game with Auto-Reset</title>
+    <style>
+        body { 
+            margin: 0; 
+            background: #2c3e50; 
+            font-family: 'Tahoma', sans-serif; 
+            text-align: center; 
+            color: white; 
+            user-select: none;
+            touch-action: none; /* ป้องกันการเลื่อนหน้าจอเวลาสัมผัส */
+        }
+        #gameCanvas { 
+            background: #34495e; 
+            display: block; 
+            margin: 10px auto; 
+            border: 4px solid #ecf0f1; 
+            border-radius: 8px;
+        }
+    </style>
+</head>
+<body>
+
+    <canvas id="gameCanvas" width="900" height="600"></canvas>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+// 1. สถานะของเกม (Game State)
+let score = 0;
+let timeLeft = 60;
+let timerInterval = null;
+let gameState = 'PLAYING'; // 'PLAYING' หรือ 'GAMEOVER'
+
+// --- ระบบ Auto-Reset เมื่อไม่มีการใช้งาน (Idle Timer) ---
+const IDLE_LIMIT = 120; // 2 นาที (120 วินาที)
+let idleTime = 0;
+let idleInterval = null;
+
+function resetIdleTimer() {
+    idleTime = 0; // เมื่อมีการสัมผัส ให้รีเซ็ตนับใหม่
+}
+
+function startIdleMonitor() {
+    if (idleInterval) clearInterval(idleInterval);
+    idleInterval = setInterval(() => {
+        idleTime++;
+        if (idleTime >= IDLE_LIMIT) {
+            initGame(); // ครบ 2 นาทีโดยไม่มีคนแตะ ให้สั่งรีเซ็ตเกมใหม่ทันที
+        }
+    }, 1000);
+}
+
+// ผูก Event การสัมผัสเข้ากับระบบรีเซ็ต Idle Timer
+window.addEventListener('touchstart', resetIdleTimer, { passive: true });
+window.addEventListener('touchmove', resetIdleTimer, { passive: true });
+window.addEventListener('mousedown', resetIdleTimer);
+window.addEventListener('mousemove', resetIdleTimer);
+
+// 2. กำหนดถังคำตอบ 3 ใบ
+const bins = [
+    { id: 'recycle', label: 'ขยะรีไซเคิล', x: 50,  y: 430, w: 230, h: 130, color: '#27ae60' },
+    { id: 'organic', label: 'ขยะอินทรีย์',  x: 335, y: 430, w: 230, h: 130, color: '#e67e22' },
+    { id: 'hazard',  label: 'ขยะอันตราย',  x: 620, y: 430, w: 230, h: 130, color: '#e74c3c' }
+];
+
+// 3. คลังคำตอบ (Master Data)
+const masterItems = [
+    { text: 'ขวดพลาสติก', category: 'recycle' },
+    { text: 'กระป๋องน้ำอัดลม', category: 'recycle' },
+    { text: 'กล่องกระดาษ', category: 'recycle' },
+    { text: 'เปลือกกล้วย', category: 'organic' },
+    { text: 'เศษอาหาร', category: 'organic' },
+    { text: 'ใบไม้แห้ง', category: 'organic' },
+    { text: 'ถ่านไฟฉาย', category: 'hazard' },
+    { text: 'หลอดไฟ', category: 'hazard' },
+    { text: 'กระป๋องสเปรย์', category: 'hazard' }
+];
+
+let activeItems = [];
+let selectedItem = null;
+let offsetX = 0, offsetY = 0;
+
+// เริ่มต้นเกมใหม่
+function initGame() {
+    score = 0;
+    timeLeft = 60;
+    gameState = 'PLAYING';
+    resetIdleTimer();
+    
+    // สุ่มตำแหน่งเริ่มต้นให้กล่องข้อความ
+    const startPositions = [
+        { x: 100, y: 120 }, { x: 380, y: 120 }, { x: 660, y: 120 },
+        { x: 100, y: 220 }, { x: 380, y: 220 }, { x: 660, y: 220 }
+    ];
+
+    // สุ่มเลือก 6 คำตอบจากคลัง
+    const shuffled = [...masterItems].sort(() => 0.5 - Math.random()).slice(0, 6);
+    
+    activeItems = shuffled.map((item, index) => ({
+        ...item,
+        x: startPositions[index].x,
+        y: startPositions[index].y,
+        originX: startPositions[index].x,
+        originY: startPositions[index].y,
+        w: 140,
+        h: 60
+    }));
+
+    if (timerInterval) clearInterval(timerInterval);
+    timerInterval = setInterval(() => {
+        if (gameState === 'PLAYING') {
+            timeLeft--;
+            if (timeLeft <= 0) {
+                timeLeft = 0;
+                endGame();
+            }
+            draw();
+        }
+    }, 1000);
+
+    draw();
+}
+
+function endGame() {
+    gameState = 'GAMEOVER';
+    clearInterval(timerInterval);
+    draw();
+}
+
+// วาดองค์ประกอบบน Canvas
+function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    if (gameState === 'PLAYING') {
+        // --- แถบแสดงสถานะด้านบน (Score & Time) ---
+        ctx.fillStyle = '#ecf0f1';
+        ctx.font = 'bold 24px Tahoma';
+        ctx.textAlign = 'left';
+        ctx.fillText(`คะแนน: ${score}`, 40, 50);
+
+        ctx.textAlign = 'right';
+        ctx.fillStyle = timeLeft <= 10 ? '#e74c3c' : '#ecf0f1';
+        ctx.fillText(`เวลาเหลือ: ${timeLeft} วินาที`, canvas.width - 40, 50);
+
+        // --- วาดถังขยะ ---
+        bins.forEach(bin => {
+            ctx.fillStyle = bin.color;
+            ctx.beginPath();
+            ctx.roundRect(bin.x, bin.y, bin.w, bin.h, 12);
+            ctx.fill();
+
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 22px Tahoma';
+            ctx.textAlign = 'center';
+            ctx.fillText(bin.label, bin.x + bin.w / 2, bin.y + bin.h / 2 + 8);
+        });
+
+        // --- วาดกล่องข้อความคำตอบ ---
+        activeItems.forEach(item => {
+            ctx.fillStyle = '#f1c40f';
+            ctx.beginPath();
+            ctx.roundRect(item.x, item.y, item.w, item.h, 8);
+            ctx.fill();
+
+            ctx.fillStyle = '#2c3e50';
+            ctx.font = 'bold 18px Tahoma';
+            ctx.textAlign = 'center';
+            ctx.fillText(item.text, item.x + item.w / 2, item.y + item.h / 2 + 6);
+        });
+
+    } else if (gameState === 'GAMEOVER') {
+        // --- หน้าสรุปผลเมื่อจบเกม ---
+        ctx.fillStyle = 'rgba(44, 62, 80, 0.95)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.fillStyle = '#f1c40f';
+        ctx.font = 'bold 44px Tahoma';
+        ctx.textAlign = 'center';
+        ctx.fillText('หมดเวลา! สรุปผลคะแนน', canvas.width / 2, 200);
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 36px Tahoma';
+        ctx.fillText(`คุณได้ทั้งหมด: ${score} คะแนน`, canvas.width / 2, 280);
+
+        // วาดปุ่มเริ่มเกมใหม่ (Restart Button)
+        ctx.fillStyle = '#27ae60';
+        ctx.beginPath();
+        ctx.roundRect(canvas.width / 2 - 120, 360, 240, 70, 15);
+        ctx.fill();
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 26px Tahoma';
+        ctx.fillText('เล่นใหม่อีกครั้ง', canvas.width / 2, 403);
+    }
+}
+
+// ตรวจจับพิกัดการสัมผัส
+function getPos(e) {
+    const rect = canvas.getBoundingClientRect();
+    const touch = e.touches ? e.touches[0] : e;
+    return {
+        x: touch.clientX - rect.left,
+        y: touch.clientY - rect.top
+    };
+}
+
+function onStart(e) {
+    const pos = getPos(e);
+
+    if (gameState === 'GAMEOVER') {
+        if (pos.x >= canvas.width / 2 - 120 && pos.x <= canvas.width / 2 + 120 &&
+            pos.y >= 360 && pos.y <= 430) {
+            initGame();
+        }
+        return;
+    }
+
+    activeItems.forEach(item => {
+        if (pos.x >= item.x && pos.x <= item.x + item.w && 
+            pos.y >= item.y && pos.y <= item.y + item.h) {
+            selectedItem = item;
+            offsetX = pos.x - item.x;
+            offsetY = pos.y - item.y;
+        }
+    });
+}
+
+function onMove(e) {
+    if (!selectedItem || gameState !== 'PLAYING') return;
+    const pos = getPos(e);
+    selectedItem.x = pos.x - offsetX;
+    selectedItem.y = pos.y - offsetY;
+    draw();
+}
+
+function onEnd() {
+    if (!selectedItem || gameState !== 'PLAYING') return;
+
+    let matched = false;
+    bins.forEach(bin => {
+        if (selectedItem.x + selectedItem.w / 2 >= bin.x &&
+            selectedItem.x + selectedItem.w / 2 <= bin.x + bin.w &&
+            selectedItem.y + selectedItem.h / 2 >= bin.y &&
+            selectedItem.y + selectedItem.h / 2 <= bin.y + bin.h) {
+
+            if (selectedItem.category === bin.id) {
+                score += 10;
+                activeItems = activeItems.filter(i => i !== selectedItem);
+                matched = true;
+
+                if (activeItems.length === 0) {
+                    endGame();
+                }
+            } else {
+                score = Math.max(0, score - 5);
+            }
+        }
+    });
+
+    if (!matched) {
+        selectedItem.x = selectedItem.originX;
+        selectedItem.y = selectedItem.originY;
+    }
+
+    selectedItem = null;
+    draw();
+}
+
+// Event Listeners
+canvas.addEventListener('mousedown', onStart);
+canvas.addEventListener('mousemove', onMove);
+canvas.addEventListener('mouseup', onEnd);
+
+canvas.addEventListener('touchstart', onStart, { passive: false });
+canvas.addEventListener('touchmove', onMove, { passive: false });
+canvas.addEventListener('touchend', onEnd);
+
+// เริ่มเกมและเปิดใช้งานระบบ Idle Monitor
+startIdleMonitor();
+initGame();
+</script>
+</body>
+</html>
