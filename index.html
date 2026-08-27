@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Touchscreen Sorting Game with Auto-Reset</title>
+    <title>Touchscreen Sorting Game with JSON</title>
     <style>
         body { 
             margin: 0; 
@@ -12,7 +12,7 @@
             text-align: center; 
             color: white; 
             user-select: none;
-            touch-action: none; /* ป้องกันการเลื่อนหน้าจอเวลาสัมผัส */
+            touch-action: none;
         }
         #gameCanvas { 
             background: #34495e; 
@@ -31,75 +31,84 @@
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
-// 1. สถานะของเกม (Game State)
 let score = 0;
 let timeLeft = 60;
 let timerInterval = null;
-let gameState = 'PLAYING'; // 'PLAYING' หรือ 'GAMEOVER'
+let gameState = 'LOADING'; // 'LOADING', 'PLAYING', 'GAMEOVER'
 
-// --- ระบบ Auto-Reset เมื่อไม่มีการใช้งาน (Idle Timer) ---
-const IDLE_LIMIT = 120; // 2 นาที (120 วินาที)
+// ตัวแปรเก็บข้อมูลที่ดึงจาก JSON
+let bins = [];
+let masterItems = [];
+let activeItems = [];
+let selectedItem = null;
+let offsetX = 0, offsetY = 0;
+
+// Idle Timer (Auto-Reset)
+const IDLE_LIMIT = 120;
 let idleTime = 0;
 let idleInterval = null;
 
-function resetIdleTimer() {
-    idleTime = 0; // เมื่อมีการสัมผัส ให้รีเซ็ตนับใหม่
-}
-
+function resetIdleTimer() { idleTime = 0; }
 function startIdleMonitor() {
     if (idleInterval) clearInterval(idleInterval);
     idleInterval = setInterval(() => {
         idleTime++;
-        if (idleTime >= IDLE_LIMIT) {
-            initGame(); // ครบ 2 นาทีโดยไม่มีคนแตะ ให้สั่งรีเซ็ตเกมใหม่ทันที
+        if (idleTime >= IDLE_LIMIT && gameState !== 'LOADING') {
+            initGame();
         }
     }, 1000);
 }
 
-// ผูก Event การสัมผัสเข้ากับระบบรีเซ็ต Idle Timer
 window.addEventListener('touchstart', resetIdleTimer, { passive: true });
 window.addEventListener('touchmove', resetIdleTimer, { passive: true });
 window.addEventListener('mousedown', resetIdleTimer);
 window.addEventListener('mousemove', resetIdleTimer);
 
-// 2. กำหนดถังคำตอบ 3 ใบ
-const bins = [
-    { id: 'recycle', label: 'ขยะรีไซเคิล', x: 50,  y: 430, w: 230, h: 130, color: '#27ae60' },
-    { id: 'organic', label: 'ขยะอินทรีย์',  x: 335, y: 430, w: 230, h: 130, color: '#e67e22' },
-    { id: 'hazard',  label: 'ขยะอันตราย',  x: 620, y: 430, w: 230, h: 130, color: '#e74c3c' }
-];
+// --- 1. ฟังก์ชันดึงข้อมูลจากไฟล์ JSON ---
+async function loadQuestionsFromJSON() {
+    try {
+        // เพิ่ม timestamp ป้องกัน Browser จดจำแคชเก่าเมื่อมีการแก้ไขไฟล์
+        const response = await fetch('questions.json?v=' + new Date().getTime());
+        if (!response.ok) throw new Error('ไม่สามารถโหลดไฟล์ JSON ได้');
+        
+        const data = await response.json();
+        
+        // กำหนดพิกัดวางถัง 3 ใบแบบอัตโนมัติ
+        const binPositions = [
+            { x: 50,  y: 430, w: 230, h: 130 },
+            { x: 335, y: 430, w: 230, h: 130 },
+            { x: 620, y: 430, w: 230, h: 130 }
+        ];
 
-// 3. คลังคำตอบ (Master Data)
-const masterItems = [
-    { text: 'ขวดพลาสติก', category: 'recycle' },
-    { text: 'กระป๋องน้ำอัดลม', category: 'recycle' },
-    { text: 'กล่องกระดาษ', category: 'recycle' },
-    { text: 'เปลือกกล้วย', category: 'organic' },
-    { text: 'เศษอาหาร', category: 'organic' },
-    { text: 'ใบไม้แห้ง', category: 'organic' },
-    { text: 'ถ่านไฟฉาย', category: 'hazard' },
-    { text: 'หลอดไฟ', category: 'hazard' },
-    { text: 'กระป๋องสเปรย์', category: 'hazard' }
-];
+        bins = data.bins.map((bin, index) => ({
+            ...bin,
+            ...binPositions[index]
+        }));
 
-let activeItems = [];
-let selectedItem = null;
-let offsetX = 0, offsetY = 0;
+        masterItems = data.items;
+        initGame();
 
-// เริ่มต้นเกมใหม่
+    } catch (error) {
+        console.error(error);
+        ctx.fillStyle = '#e74c3c';
+        ctx.font = 'bold 24px Tahoma';
+        ctx.textAlign = 'center';
+        ctx.fillText('เกิดข้อผิดพลาดในการโหลดไฟล์ questions.json', canvas.width / 2, canvas.height / 2);
+    }
+}
+
+// --- 2. เริ่มต้นเกม ---
 function initGame() {
     score = 0;
     timeLeft = 60;
     gameState = 'PLAYING';
     resetIdleTimer();
     
-    // สุ่มตำแหน่งเริ่มต้นให้กล่องข้อความ
     const startPositions = [
         { x: 100, y: 120 }, { x: 380, y: 120 }, { x: 660, y: 120 },
         { x: 100, y: 220 }, { x: 380, y: 220 }, { x: 660, y: 220 }
     ];
 
-    // สุ่มเลือก 6 คำตอบจากคลัง
     const shuffled = [...masterItems].sort(() => 0.5 - Math.random()).slice(0, 6);
     
     activeItems = shuffled.map((item, index) => ({
@@ -133,12 +142,18 @@ function endGame() {
     draw();
 }
 
-// วาดองค์ประกอบบน Canvas
 function draw() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+    if (gameState === 'LOADING') {
+        ctx.fillStyle = '#ecf0f1';
+        ctx.font = 'bold 26px Tahoma';
+        ctx.textAlign = 'center';
+        ctx.fillText('กำลังโหลดข้อมูลคำถาม...', canvas.width / 2, canvas.height / 2);
+        return;
+    }
+
     if (gameState === 'PLAYING') {
-        // --- แถบแสดงสถานะด้านบน (Score & Time) ---
         ctx.fillStyle = '#ecf0f1';
         ctx.font = 'bold 24px Tahoma';
         ctx.textAlign = 'left';
@@ -148,9 +163,8 @@ function draw() {
         ctx.fillStyle = timeLeft <= 10 ? '#e74c3c' : '#ecf0f1';
         ctx.fillText(`เวลาเหลือ: ${timeLeft} วินาที`, canvas.width - 40, 50);
 
-        // --- วาดถังขยะ ---
         bins.forEach(bin => {
-            ctx.fillStyle = bin.color;
+            ctx.fillStyle = bin.color || '#3498db';
             ctx.beginPath();
             ctx.roundRect(bin.x, bin.y, bin.w, bin.h, 12);
             ctx.fill();
@@ -161,7 +175,6 @@ function draw() {
             ctx.fillText(bin.label, bin.x + bin.w / 2, bin.y + bin.h / 2 + 8);
         });
 
-        // --- วาดกล่องข้อความคำตอบ ---
         activeItems.forEach(item => {
             ctx.fillStyle = '#f1c40f';
             ctx.beginPath();
@@ -175,7 +188,6 @@ function draw() {
         });
 
     } else if (gameState === 'GAMEOVER') {
-        // --- หน้าสรุปผลเมื่อจบเกม ---
         ctx.fillStyle = 'rgba(44, 62, 80, 0.95)';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -188,7 +200,6 @@ function draw() {
         ctx.font = 'bold 36px Tahoma';
         ctx.fillText(`คุณได้ทั้งหมด: ${score} คะแนน`, canvas.width / 2, 280);
 
-        // วาดปุ่มเริ่มเกมใหม่ (Restart Button)
         ctx.fillStyle = '#27ae60';
         ctx.beginPath();
         ctx.roundRect(canvas.width / 2 - 120, 360, 240, 70, 15);
@@ -200,7 +211,6 @@ function draw() {
     }
 }
 
-// ตรวจจับพิกัดการสัมผัส
 function getPos(e) {
     const rect = canvas.getBoundingClientRect();
     const touch = e.touches ? e.touches[0] : e;
@@ -272,7 +282,6 @@ function onEnd() {
     draw();
 }
 
-// Event Listeners
 canvas.addEventListener('mousedown', onStart);
 canvas.addEventListener('mousemove', onMove);
 canvas.addEventListener('mouseup', onEnd);
@@ -281,9 +290,9 @@ canvas.addEventListener('touchstart', onStart, { passive: false });
 canvas.addEventListener('touchmove', onMove, { passive: false });
 canvas.addEventListener('touchend', onEnd);
 
-// เริ่มเกมและเปิดใช้งานระบบ Idle Monitor
+// เริ่มดึงข้อมูลและระบบจับเวลา Idle
 startIdleMonitor();
-initGame();
+loadQuestionsFromJSON();
 </script>
 </body>
 </html>
