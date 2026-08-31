@@ -480,30 +480,31 @@ function onEnd() {
             selectedItem.y + selectedItem.h / 2 <= bin.y + bin.h) {
 
             if (selectedItem.category === bin.id) {
-                // --- 1. คำนวณคะแนนตามความไว (ยิ่งตอบเร็ว คะแนนยิ่งเยอะ) ---
-                const speedBonus = Math.floor(timeLeft / 5); // ได้โบนัสเพิ่มตามวินาทีที่เหลือ
-                const pointsEarned = 10 + speedBonus;
-                
-                score += pointsEarned;
+                // 1. ได้คะแนนพื้นฐานข้อละ 10 คะแนน
+                const basePoint = 10;
+                score += basePoint;
                 playSound('correct');
 
-                // แสดงข้อความเอฟเฟกต์บอกคะแนนที่ได้จริงตามความไว
-                addFloatingText(`+${pointsEarned} SPEED BONUS!`, selectedItem.x + selectedItem.w / 2, selectedItem.y, '#00ffcc');
+                addFloatingText(`+${basePoint} CORRECT!`, selectedItem.x + selectedItem.w / 2, selectedItem.y, '#00ffcc');
                 
                 activeItems = activeItems.filter(i => i !== selectedItem);
                 matched = true;
 
+                // 2. เมื่อตอบถูกครบทั้ง 6 ข้อ คำนวณโบนัสความไวเต็ม 40 คะแนน
                 if (activeItems.length === 0) {
-                    // --- 2. โบนัสพิเศษเมื่อทำครบทุกข้อ (Clear Time Bonus) ---
-                    const clearBonus = timeLeft * 2; // เอาเวลาที่เหลือทั้งหมด x 2 เป็นโบนัสปิดเกม
-                    score += clearBonus;
+                    const speedBonus = Math.floor((timeLeft / 60) * 40); // คำนวณสัดส่วนเวลาที่เหลือเต็ม 40 คะแนน
+                    score += speedBonus;
+
+                    if (speedBonus > 0) {
+                        addFloatingText(`+${speedBonus} SPEED BONUS!`, canvas.width / 2, canvas.height / 2 - 50, '#ff00ff');
+                    }
                     
                     endGame();
                 }
             } else {
-                // --- 3. บทลงโทษเมื่อตอบผิด (หักคะแนน + หักเวลา) ---
+                // 3. บทลงโทษตอบผิด: หัก 5 คะแนน และหักเวลา 3 วินาที
                 score = Math.max(0, score - 5);
-                timeLeft = Math.max(0, timeLeft - 3); // โดนหักเวลาเพิ่ม 3 วินาที
+                timeLeft = Math.max(0, timeLeft - 3);
                 
                 playSound('wrong');
                 addFloatingText('-5 PTS / -3s PENALTY!', selectedItem.x + selectedItem.w / 2, selectedItem.y, '#ff3366');
